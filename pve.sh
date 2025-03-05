@@ -1,7 +1,17 @@
 #!/bin/bash
-# Optimized Proxmox VE Installation Script with USTC Mirror Option
 # Source: https://github.com/OffroadOps/pve_fast_install_system
 # Updated: 2025-03-05
+
+# 免责声明
+echo "免责声明："
+echo "当前的操作系统镜像来自互联网，来源是 https://github.com/leitbogioro/Tools"
+echo "Windows 的默认密码均为：Teddysun.com"
+echo "当前镜像地址：https://dl.lamp.sh/vhd"
+read -p "如果你同意继续，请按 Y，反之请输入 N: " disclaimer_choice
+if [[ "$disclaimer_choice" != "Y" && "$disclaimer_choice" != "y" ]]; then
+    echo "用户未同意免责声明，脚本退出。"
+    exit 1
+fi
 
 # 项目名称
 project_name="pve_fast_install_system"
