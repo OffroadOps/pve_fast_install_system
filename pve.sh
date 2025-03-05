@@ -1,146 +1,167 @@
 #!/bin/bash
 # Optimized Proxmox VE Installation Script with USTC Mirror Option
-# Source: https://github.com/dahai0401/pve
-# Updated: 2025-02-26
+# Source: https://github.com/OffroadOps/pve_fast_install_system
+# Updated: 2025-03-05
 
-########## Color Output Functions ##########
-_red() { echo -e "\033[31m\033[01m$@\033[0m"; }
-_green() { echo -e "\033[32m\033[01m$@\033[0m"; }
-_yellow() { echo -e "\033[33m\033[01m$@\033[0m"; }
-_blue() { echo -e "\033[36m\033[01m$@\033[0m"; }
-reading() { read -rp "$(_green "$1")" "$2"; }
-export DEBIAN_FRONTEND=noninteractive
+# 项目名称
+project_name="pve_fast_install_system"
 
-# Set UTF-8 locale
-utf8_locale=$(locale -a 2>/dev/null | grep -i -m 1 -E "UTF-8|utf8")
-if [[ -n "$utf8_locale" ]]; then
-    export LC_ALL="$utf8_locale"
-    export LANG="$utf8_locale"
-    export LANGUAGE="$utf8_locale"
-fi
+# 日志文件路径
+log_file="./pve_default_generator_$(date +'%Y%m%d_%H%M%S').log"
 
-########## Basic System Checks ##########
-if [ "$(id -u)" != "0" ]; then
-    _red "This script must be run as root."
-    exit 1
-fi
+# 临时解压目录
+extract_dir="./System_Files"
+mkdir -p "$extract_dir"
 
-if dpkg -l | grep -q 'proxmox-ve'; then
-    _green "Proxmox VE is already installed. Exiting."
-    exit 1
-fi
+# 下载目录
+download_dir="./System_OS"
+mkdir -p "$download_dir"
 
-########## Ask User for Location ##########
-reading "Are you in China? (y/n): " location_choice
-if [[ "$location_choice" =~ ^[Yy]$ ]]; then
-    _green "Using USTC mirror for better speed in China."
-    use_ustc=true
-else
-    _green "Using default Proxmox and Debian sources."
-    use_ustc=false
-fi
-
-########## Configure APT Sources ##########
-if [ "$use_ustc" = true ]; then
-    # Backup existing sources
-    cp /etc/apt/sources.list /etc/apt/sources.list.bak
-
-    # Use USTC mirror
-    cat <<EOF > /etc/apt/sources.list
-deb https://mirrors.ustc.edu.cn/debian/ bookworm main contrib non-free non-free-firmware
-deb https://mirrors.ustc.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware
-deb https://mirrors.ustc.edu.cn/debian/ bookworm-backports main contrib non-free non-free-firmware
-deb https://mirrors.ustc.edu.cn/debian-security bookworm-security main
-EOF
-
-    cat <<EOF > /etc/apt/sources.list.d/ceph.list
-deb https://mirrors.ustc.edu.cn/proxmox/debian/ceph-quincy bookworm no-subscription
-EOF
-
-    cat <<EOF > /etc/apt/sources.list.d/pve-enterprise.list
-deb https://mirrors.ustc.edu.cn/proxmox/debian bookworm pve-no-subscription
-EOF
-
-    # Ensure the enterprise list does not use a paid subscription
-    sed -i 's/^deb/#deb/g' /etc/apt/sources.list.d/pve-enterprise.list
-
-    # Update GPG keys
-    wget -qO- https://mirrors.ustc.edu.cn/proxmox/debian/proxmox-release-bookworm.gpg | tee /etc/apt/trusted.gpg.d/proxmox-release.gpg >/dev/null
-fi
-
-########## Install Required Packages ##########
-apt-get update -y && apt-get upgrade -y
-install_package() {
-    local package_name=$1
-    if ! command -v "$package_name" >/dev/null 2>&1; then
-        apt-get install -y "$package_name" --allow-downgrades --allow-remove-essential --allow-change-held-packages
-        if [ $? -ne 0 ]; then
-            _red "Failed to install $package_name. Exiting."
-            exit 1
-        fi
-    fi
+# 输出日志
+log() {
+    echo "$1" | tee -a "$log_file"
 }
 
-install_package wget
-install_package curl
-install_package sudo
-install_package iproute2
-install_package dnsutils
-install_package net-tools
-install_package lsb-release
-install_package ethtool
-install_package chrony
+# 错误退出
+error_exit() {
+    log "错误: $1"
+    exit 1
+}
 
-########## Set System Time ##########
-systemctl stop ntpd 2>/dev/null || true
-systemctl stop chronyd 2>/dev/null || true
-chronyd -q
-systemctl start chronyd
+# 下载的 Debian 镜像
+debian_versions=(
+    "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"
+    "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+    "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-nocloud-amd64.qcow2"
+)
 
-########## Configure Hostname ##########
-reading "Enter a new hostname (default: pve): " new_hostname
-new_hostname=${new_hostname:-pve}
-hostnamectl set-hostname "$new_hostname"
-echo "$new_hostname" > /etc/hostname
-sed -i "/127.0.0.1/c\127.0.0.1 localhost $new_hostname" /etc/hosts
-if ! grep -q "::1 localhost" /etc/hosts; then
-    echo "::1 localhost" >> /etc/hosts
-fi
+# 下载的 Windows 镜像
+windows_versions=(
+    "cn_win2012r2.xz"
+    "cn_win2012r2_uefi.xz"
+    "cn_win2016.xz"
+    "cn_win2016_uefi.xz"
+    "cn_win2019.xz"
+    "cn_win2019_uefi.xz"
+    "en-us_win10_ltsc_uefi.xz"
+    "en-us_win11_ltsc.xz"
+    "en-us_win11_ltsc_uefi.xz"
+    "en-us_win11_uefi.xz"
+    "en-us_win2022.xz"
+    "en-us_win2022_uefi.xz"
+    "en-us_win2025.xz"
+    "en-us_win2025_uefi.xz"
+    "en-us_windows10_ltsc.xz"
+    "en-us_windows11.xz"
+    "en-us_windows11_22h2.xz"
+    "en-us_windows11_22h2_uefi.xz"
+    "en_win2012r2.xz"
+    "en_win2012r2_uefi.xz"
+    "en_win2016.xz"
+    "en_win2016_uefi.xz"
+    "en_win2019.xz"
+    "en_win2019_uefi.xz"
+    "ja-jp_win10_ltsc_uefi.xz"
+    "ja-jp_win11_ltsc.xz"
+    "ja-jp_win11_ltsc_uefi.xz"
+    "ja-jp_win11_uefi.xz"
+    "ja-jp_win2022.xz"
+    "ja-jp_win2022_uefi.xz"
+    "ja-jp_win2025.xz"
+    "ja-jp_win2025_uefi.xz"
+    "ja-jp_windows10_ltsc.xz"
+    "ja-jp_windows11.xz"
+    "ja-jp_windows11_22h2.xz"
+    "ja-jp_windows11_22h2_uefi.xz"
+    "ja-win2012r2.xz"
+)
 
-########## Add Proxmox VE Repository ##########
-if [ "$use_ustc" = false ]; then
-    version=$(lsb_release -cs)
-    echo "deb http://download.proxmox.com/debian/pve $version pve-no-subscription" > /etc/apt/sources.list.d/pve.list
-    wget -qO- http://download.proxmox.com/debian/proxmox-release-$version.gpg | tee /etc/apt/trusted.gpg.d/proxmox-release.gpg >/dev/null
-    apt-get update -y
-fi
+# 默认配置
+default_vm_id="100"
+disk_format="qcow2"
 
-########## Install Proxmox VE ##########
-install_package proxmox-ve
-install_package postfix
-install_package open-iscsi
+# 开始
+log "欢迎使用 $project_name"
 
-########## Configure Networking ##########
-interface=$(ip -o -4 route show to default | awk '{print $5}')
-ipv4_address=$(ip -o -4 addr show dev $interface | awk '{print $4}' | cut -d'/' -f1)
-ipv4_gateway=$(ip route | awk '/default/ {print $3}')
+echo "请选择操作:"
+echo "1) 创建虚拟机"
+echo "2) 导入虚拟机"
+read -p "请输入选项 [1-2]: " action_choice
 
-cat <<EOF > /etc/network/interfaces
-auto lo
-iface lo inet loopback
+case $action_choice in
+    1)
+        log "选择了创建虚拟机"
 
-auto vmbr0
-iface vmbr0 inet static
-    address $ipv4_address
-    gateway $ipv4_gateway
-    bridge_ports $interface
-    bridge_stp off
-    bridge_fd 0
-EOF
+        # 自动分配 VM ID
+        existing_vms=$(qm list | awk '{print $1}' | grep -E '^[0-9]+$' | sort -n)
+        new_vm_id=$default_vm_id
+        for vm_id in $existing_vms; do
+            if [[ $vm_id -ge $new_vm_id ]]; then
+                new_vm_id=$((vm_id + 1))
+            fi
+        done
+        log "新虚拟机编号: $new_vm_id"
 
-systemctl restart networking
+        echo "请选择 Windows 版本:"
+        select win_version in "${windows_versions[@]}"; do
+            os_url="https://dl.lamp.sh/vhd/$win_version"
+            os_name="$win_version"
+            log "选择的 Windows 镜像: $os_url"
+            [[ "$win_version" == *"uefi"* ]] && uefi_mode="yes" || uefi_mode="no"
+            break
+        done
 
-########## Installation Complete ##########
-_green "Installation complete! Access Proxmox VE at: https://$ipv4_address:8006/"
-_green "Login with your root credentials."
-exit 0
+        image_file="${download_dir}/${os_name}"
+        extracted_image="${extract_dir}/${os_name%.xz}"
+
+        if [ ! -f "$image_file" ]; then
+            log "下载镜像文件: $os_url"
+            curl -L "$os_url" -o "$image_file" --progress-bar
+            [[ $? -ne 0 || ! -f "$image_file" ]] && error_exit "镜像文件下载失败！"
+            log "镜像文件下载成功: $image_file"
+        else
+            log "镜像文件已存在: $image_file"
+        fi
+
+        if [[ "$image_file" == *.xz ]]; then
+            if [ ! -f "$extracted_image" ]; then
+                log "解压中..."
+                xz -d --verbose --keep --stdout "$image_file" > "$extracted_image"
+                [[ $? -ne 0 || ! -f "$extracted_image" ]] && error_exit "解压失败！"
+                log "解压成功: $extracted_image"
+            fi
+            image_file="$extracted_image"
+        fi
+
+        log "验证解压后的镜像文件..."
+        qemu-img info "$image_file" || error_exit "镜像文件损坏或无效"
+        log "镜像文件验证通过"
+
+        storage_pool=$(pvesm status | grep "local" | awk '{print $1}' | head -n 1)
+        [[ -z "$storage_pool" ]] && error_exit "未找到有效存储池！"
+        log "选择存储池: $storage_pool"
+
+        log "创建虚拟机 $new_vm_id"
+        qm create "$new_vm_id" --name "vm-${new_vm_id}" --memory 1024 --cores 1 --net0 virtio,bridge=vmbr0
+        [[ $? -ne 0 ]] && error_exit "创建虚拟机失败！"
+
+        qm importdisk "$new_vm_id" "$image_file" "$storage_pool" --format "$disk_format"
+        log "镜像导入成功"
+
+        qm set "$new_vm_id" --scsihw virtio-scsi-pci --scsi0 "$storage_pool:$new_vm_id/vm-${new_vm_id}-disk-0.qcow2"
+        log "磁盘成功添加到虚拟机"
+
+        qm set "$new_vm_id" --boot order=scsi0
+        log "设置磁盘为启动盘"
+
+        read -p "是否立即启动虚拟机？(y/n): " boot_vm
+        if [[ "$boot_vm" == "y" || "$boot_vm" == "Y" ]]; then
+            qm start "$new_vm_id"
+            log "虚拟机 $new_vm_id 启动成功"
+        fi
+        log "虚拟机创建完成！"
+        ;;
+    *)
+        error_exit "无效选择"
+        ;;
+esac
